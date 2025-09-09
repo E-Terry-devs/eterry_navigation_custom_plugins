@@ -1,0 +1,38 @@
+# Compiled files
+*.o
+*.out
+*.a
+*.so
+*.exe
+*.bin
+
+# Build directories (for CMake, ROS2, and Colcon)
+build/
+install/
+devel/
+log/
+
+# Python-related
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+venv/
+.env
+
+# ROS2 and Colcon-specific
+.colcon/
+ros_ws/build/
+ros_ws/install/
+ros_ws/log/
+
+# Editor and OS-generated files
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Jetson/NVIDIA-related files
+*.nvcache/
+
