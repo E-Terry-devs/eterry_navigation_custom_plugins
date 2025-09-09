@@ -1,6 +1,7 @@
 # eterry_navigation_custom_plugins
 A ROS 2 package providing Behavior Tree nodes for autonomous coverage path planning and navigation in agricultural environments.
-##🌟 Features
+
+## 🌟 Features
 Coverage Path Planning: Complete field coverage algorithms for agricultural robots
 
 Behavior Tree Nodes: Custom BT nodes for ROS 2 Navigation2 framework
@@ -11,8 +12,8 @@ Pause/Resume: Intelligent navigation interruption and resumption
 
 First-Run Handling: Smart initialization that only goes to start position once
 
-###📦 Included Nodes
-🎯 Core Navigation Nodes
+### 📦 Included Nodes
+### 🎯 Core Navigation Nodes
 SimplePathGenerator: Generates smooth paths with configurable curvature
 
 CoveragePathTrimmer: Trims already-covered paths for efficient resumption
@@ -21,7 +22,7 @@ PauseCondition: Handles navigation pause/resume functionality
 
 IsFirstRun: Condition node for one-time initialization sequences
 
-####🔧 Technical Specifications
+#### 🔧 Technical Specifications
 ROS 2 Humble compatible
 
 BehaviorTree.CPP v3 integration
@@ -30,8 +31,8 @@ BehaviorTree.CPP v3 integration
 
 Configurable path parameters: points per meter, curvature, min/max points
 
-#####🏗️ Architecture
-<img src="https://github.com/hediiimohamed/eterry_navigation_custom_plugins/blob/main/img/eterry_navigation_Bt.png" width="1000" alt="E-terry Navigation BT">
+##### 🏗️ Architecture
+<img src="https://github.com/hediiimohamed/eterry_navigation_custom_plugins/eterry_navigation_Bt.png" width="1000" alt="E-terry Navigation BT">
 
 
 Behavior Tree Structure
@@ -45,7 +46,7 @@ Pause/Resume: Handles interruptions gracefully
 
 Efficient coverage: Minimizes redundant path traversal
 
-🎯 Use Cases
+###### 🎯 Use Cases
 Agricultural robotics: Field coverage and crop monitoring
 
 Autonomous mowing: Lawn and turf management
@@ -67,7 +68,7 @@ git clone https://github.com/your-username/bt_simple_path_generator.git
 colcon build --packages-select bt_simple_path_generator
 source install/setup.bash
 ```
-####### YAML Configuration Example :
+###### YAML Configuration Example :
 bt_loop_duration: 50
 default_server_timeout: 20
 navigators: ['navigate_complete_coverage']
@@ -83,7 +84,7 @@ plugin_lib_names:
   - pause_condition_bt_node
   - is_first_run_condition_bt_node
   
-######## Behavior Tree Structure
+###### Behavior Tree Structure
 The package implements a sophisticated BT that:
 
 1/First run: Navigates to optimal start position
