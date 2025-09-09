@@ -32,7 +32,7 @@ BehaviorTree.CPP v3 integration
 Configurable path parameters: points per meter, curvature, min/max points
 
 ##### 🏗️ Architecture
-<img src="[https://github.com/hediiimohamed/eterry_navigation_custom_plugins/eterry_navigation_Bt.png](https://github.com/E-Terry-devs/eterry_navigation_custom_plugins/blob/master/eterry_navigation_Bt.png)" width="1000" alt="E-terry Navigation BT">
+<img src="https://github.com/E-Terry-devs/eterry_navigation_custom_plugins/blob/master/eterry_navigation_Bt.png" width="1000" alt="E-terry Navigation BT">
 Behavior Tree Structure
 The package implements a sophisticated BT that:
 
