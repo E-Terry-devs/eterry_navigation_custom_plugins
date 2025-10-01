@@ -37,6 +37,8 @@ public:
         "curvature_distance", 1.5, "Distance for curvature control (m)"),
       BT::InputPort<double>(
         "curvature_intensity", 0.5, "Curvature intensity factor (0.0-1.0)"),
+      BT::InputPort<double>(
+        "straight_ratio", 0.3, "Ratio of path that should be straight (0.0-1.0)"),
       BT::OutputPort<nav_msgs::msg::Path>(
         "generated_path", "Output generated path")
     };
@@ -58,12 +60,17 @@ public:
     double points_per_meter = 5.0;
     double curvature_dist = 1.5;
     double curvature_intensity = 0.5;
+    double straight_ratio = 0.3;  // 30% of path is straight
 
     getInput("min_points", min_points);
     getInput("max_points", max_points);
     getInput("points_per_meter", points_per_meter);
     getInput("curvature_distance", curvature_dist);
     getInput("curvature_intensity", curvature_intensity);
+    getInput("straight_ratio", straight_ratio);
+
+    // Clamp straight ratio to valid range
+    straight_ratio = std::clamp(straight_ratio, 0.0, 1.0);
 
     // Obtenir la pose actuelle du robot
     geometry_msgs::msg::TransformStamped transformStamped;
@@ -141,66 +148,112 @@ public:
     double target_yaw = std::atan2(dy, dx);
     double yaw_diff = normalizeAngle(target_yaw - start_yaw);
 
-    // Calcul du point de contrôle Bézier
-    double ux = dx / distance;
-    double uy = dy / distance;
-    
-    // Vecteur perpendiculaire pour la courbure
-    double perp_x = -uy;
-    double perp_y = ux;
-    
-    // Intensité de la courbure basée sur l'angle et la distance
-    double curvature_factor = curvature_intensity * std::sin(yaw_diff) * distance;
-    
-    // Point de contrôle Bézier
-    double ctrl_x = start_pose.pose.position.x + curvature_dist * ux + curvature_factor * perp_x;
-    double ctrl_y = start_pose.pose.position.y + curvature_dist * uy + curvature_factor * perp_y;
+    // Vérifier si on doit générer une ligne droite (curvature_distance == 0.0)
+    bool generate_straight_line = (curvature_dist == 0.0);
 
-    // Génération du chemin Bézier
+    // Génération du chemin
     nav_msgs::msg::Path path_msg;
     path_msg.header.frame_id = "map";
     path_msg.header.stamp = node_->now();
     path_msg.poses.reserve(num_points + 1);
 
-    for (int i = 0; i <= num_points; ++i)
-    {
-      double t = static_cast<double>(i) / num_points;
-      geometry_msgs::msg::PoseStamped pose;
-      pose.header = path_msg.header;
+    if (generate_straight_line) {
+      // Générer une ligne droite simple
+      for (int i = 0; i <= num_points; ++i)
+      {
+        double t = static_cast<double>(i) / num_points;
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = path_msg.header;
 
-      // Courbe de Bézier quadratique
-      double omt = 1.0 - t;
-      pose.pose.position.x = omt * omt * start_pose.pose.position.x +
-                           2 * omt * t * ctrl_x +
-                           t * t * goal_pose.pose.position.x;
-      
-      pose.pose.position.y = omt * omt * start_pose.pose.position.y +
-                           2 * omt * t * ctrl_y +
-                           t * t * goal_pose.pose.position.y;
-      
-      pose.pose.position.z = start_pose.pose.position.z + t * dz;
+        // Interpolation linéaire directe
+        pose.pose.position.x = start_pose.pose.position.x + t * dx;
+        pose.pose.position.y = start_pose.pose.position.y + t * dy;
+        pose.pose.position.z = start_pose.pose.position.z + t * dz;
 
-      // Interpolation d'orientation (smooth)
-      double interp_yaw;
-      if (distance < 0.5) {
-        // Pour les courtes distances, interpolation directe
-        interp_yaw = start_yaw + t * normalizeAngle(goal_yaw - start_yaw);
-      } else {
-        // Pour les longues distances, suivre la direction du chemin
-        if (t < 0.3) {
-          interp_yaw = start_yaw + (t/0.3) * yaw_diff;
-        } else if (t > 0.7) {
-          interp_yaw = target_yaw + ((t-0.7)/0.3) * normalizeAngle(goal_yaw - target_yaw);
-        } else {
-          interp_yaw = target_yaw;
-        }
+        // Interpolation d'orientation directe
+        double interp_yaw = start_yaw + t * normalizeAngle(goal_yaw - start_yaw);
+
+        tf2::Quaternion orientation;
+        orientation.setRPY(0, 0, interp_yaw);
+        pose.pose.orientation = tf2::toMsg(orientation);
+
+        path_msg.poses.push_back(pose);
       }
+    } else {
+      // Code original pour la génération de chemin avec courbure
+      double ux = dx / distance;
+      double uy = dy / distance;
+      
+      // Vecteur perpendiculaire pour la courbure
+      double perp_x = -uy;
+      double perp_y = ux;
+      
+      // Intensité de la courbure basée sur l'angle et la distance
+      double curvature_factor = curvature_intensity * std::sin(yaw_diff) * distance;
+      
+      // Point de contrôle Bézier positionné vers la fin (après la partie droite)
+      double control_offset_ratio = 1.0 - straight_ratio;
+      double ctrl_x = start_pose.pose.position.x + control_offset_ratio * dx + curvature_factor * perp_x;
+      double ctrl_y = start_pose.pose.position.y + control_offset_ratio * dy + curvature_factor * perp_y;
 
-      tf2::Quaternion orientation;
-      orientation.setRPY(0, 0, interp_yaw);
-      pose.pose.orientation = tf2::toMsg(orientation);
+      // Calculer le point où la courbure commence
+      double straight_end_x = start_pose.pose.position.x + straight_ratio * dx;
+      double straight_end_y = start_pose.pose.position.y + straight_ratio * dy;
+      double straight_end_z = start_pose.pose.position.z + straight_ratio * dz;
 
-      path_msg.poses.push_back(pose);
+      for (int i = 0; i <= num_points; ++i)
+      {
+        double t = static_cast<double>(i) / num_points;
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = path_msg.header;
+
+        if (t <= straight_ratio) {
+          // Partie droite - interpolation linéaire
+          pose.pose.position.x = start_pose.pose.position.x + (t / straight_ratio) * straight_ratio * dx;
+          pose.pose.position.y = start_pose.pose.position.y + (t / straight_ratio) * straight_ratio * dy;
+          pose.pose.position.z = start_pose.pose.position.z + (t / straight_ratio) * straight_ratio * dz;
+        } else {
+          // Partie courbe - Bézier quadratique
+          double curve_t = (t - straight_ratio) / (1.0 - straight_ratio);
+          double omt = 1.0 - curve_t;
+          
+          // Courbe de Bézier avec point de départ = fin de la partie droite
+          pose.pose.position.x = omt * omt * straight_end_x +
+                               2 * omt * curve_t * ctrl_x +
+                               curve_t * curve_t * goal_pose.pose.position.x;
+          
+          pose.pose.position.y = omt * omt * straight_end_y +
+                               2 * omt * curve_t * ctrl_y +
+                               curve_t * curve_t * goal_pose.pose.position.y;
+          
+          pose.pose.position.z = straight_end_z + curve_t * (dz * (1.0 - straight_ratio));
+        }
+
+        // Interpolation d'orientation
+        double interp_yaw;
+        if (distance < 0.5) {
+          // Pour les courtes distances, interpolation directe
+          interp_yaw = start_yaw + t * normalizeAngle(goal_yaw - start_yaw);
+        } else {
+          // Pour les longues distances, suivre la direction du chemin
+          if (t < straight_ratio) {
+            // Pendant la partie droite, garder l'orientation de départ
+            interp_yaw = start_yaw;
+          } else if (t > 0.7) {
+            interp_yaw = target_yaw + ((t-0.7)/0.3) * normalizeAngle(goal_yaw - target_yaw);
+          } else {
+            // Pendant la courbure, interpoler vers la direction cible
+            double curve_t = (t - straight_ratio) / (0.7 - straight_ratio);
+            interp_yaw = start_yaw + curve_t * yaw_diff;
+          }
+        }
+
+        tf2::Quaternion orientation;
+        orientation.setRPY(0, 0, interp_yaw);
+        pose.pose.orientation = tf2::toMsg(orientation);
+
+        path_msg.poses.push_back(pose);
+      }
     }
 
     // Sortie et publication
@@ -208,7 +261,8 @@ public:
     path_pub_->publish(path_msg);
 
     RCLCPP_INFO(node_->get_logger(), 
-                "SimplePathGenerator: Generated Bézier path with %d points, distance: %.2fm", 
+                "SimplePathGenerator: Generated %s path with %d points, distance: %.2fm", 
+                generate_straight_line ? "straight" : "curved", 
                 num_points, distance);
     
     return BT::NodeStatus::SUCCESS;
