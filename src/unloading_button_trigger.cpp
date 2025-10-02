@@ -109,4 +109,3 @@ BT_REGISTER_NODES(factory)
 {
     factory.registerNodeType<UnloadingButtonTrigger>("UnloadingButtonTrigger");
 }
-
