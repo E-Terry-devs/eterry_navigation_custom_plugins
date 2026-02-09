@@ -12,11 +12,17 @@
   <depend>rclcpp</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>nav2_msgs</depend>
   <depend>behaviortree_cpp_v3</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>std_msgs</depend>
   <depend>nav2_util</depend>
+  <depend>sensor_msgs</depend>
+  <depend>eterry_vs</depend>
+  <depend>cv_bridge</depend>
+  <depend>opencv</depend>
+  <depend>eterry_navigation_custom_interfaces</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

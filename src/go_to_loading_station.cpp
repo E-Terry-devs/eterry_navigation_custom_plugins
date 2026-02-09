@@ -44,44 +44,52 @@ Point parsePoint(const std::string& coordStr) {
     return {x, y};
 }
 
-// Fonction pour trouver le point de sortie vers le start de la première rangée
-Point getExitPointTowardsFirstRowStart(const Row& currentRow, const Point& firstRowStart, double extra_distance = 4.0) {
-    // Déterminer quel point de la rangée courante est le plus proche du start de la première rangée
-    double distToStart = std::hypot(currentRow.start.x - firstRowStart.x, currentRow.start.y - firstRowStart.y);
-    double distToEnd = std::hypot(currentRow.end.x - firstRowStart.x, currentRow.end.y - firstRowStart.y);
+// Fonction pour obtenir le point de sortie selon le pattern spécifique
+Point getExitPointForRow(const Row& row) {
+    Point exitPoint;
     
-    Point closestPoint;
-    Point farthestPoint;
-    if (distToStart <= distToEnd) {
-        closestPoint = currentRow.start;
-        farthestPoint = currentRow.end;
+    // Logique spécifique selon l'ID de la rangée
+    if (row.id == 1) {
+        exitPoint = row.start; // Start point pour la rangée 1
+    } else if (row.id == 2) {
+        exitPoint = row.end;   // End point pour la rangée 2  
+    } else if (row.id == 3) {
+        exitPoint = row.start; // Start point pour la rangée 3
+    } else if (row.id == 4) {
+        exitPoint = row.end;   // End point pour la rangée 4
+    } else if (row.id == 5) {
+        exitPoint = row.start; // Start point pour la rangée 5
+    } else if (row.id == 6) {
+        exitPoint = row.end;   // End point pour la rangée 6
+    } else if (row.id == 7) {
+        exitPoint = row.start; // Start point pour la rangée 7
+    } else if (row.id == 8) {
+        exitPoint = row.end;   // End point pour la rangée 8
+    } else if (row.id == 9) {
+        exitPoint = row.start; // Start point pour la rangée 9
     } else {
-        closestPoint = currentRow.end;
-        farthestPoint = currentRow.start;
+        // Fallback pour les rangées au-delà de 9
+        exitPoint = (row.id % 2 == 1) ? row.start : row.end;
     }
     
-    // Calculer la direction depuis le point le plus éloigné vers le point le plus proche
-    double dx = closestPoint.x - farthestPoint.x;
-    double dy = closestPoint.y - farthestPoint.y;
-    double length = std::sqrt(dx*dx + dy*dy);
+    return exitPoint;
+}
+
+// Fonction pour obtenir le point 4m AVANT le point de sortie
+Point getPointBeforeExit(const Row& row, double distance_before = 6.0) {
+    Point exitPoint = getExitPointForRow(row);
     
-    if (length < 0.001) {
-        // Si les points sont confondus, on utilise une direction par défaut
-        dx = 1.0; dy = 0.0;
-        length = 1.0;
-    }
+    // Pour les rangées impaires (1,3,5,7,9), on recule vers la gauche (direction négative en x)
+    // Pour les rangées paires (2,4,6,8), on recule vers la droite (direction positive en x)
+    double direction_x = -1.0;
     
-    // Normaliser le vecteur direction
-    dx /= length;
-    dy /= length;
-    
-    // Aller au point le plus proche et CONTINUER de 4m dans la même direction (vers l'extérieur)
-    Point extended_point = {
-        closestPoint.x + dx * extra_distance,
-        closestPoint.y + dy * extra_distance
+    // Appliquer l'offset en reculant de 4m
+    Point point_before = {
+        exitPoint.x + direction_x * distance_before,
+        exitPoint.y
     };
     
-    return extended_point;
+    return point_before;
 }
 
 // Fonction pour créer une PoseStamped à partir d'un Point
@@ -93,9 +101,9 @@ geometry_msgs::msg::PoseStamped createPoseFromPoint(const Point& point, const st
     pose.pose.position.y = point.y;
     pose.pose.position.z = 0.0;
     
-    // Orientation par défaut (face à la première rangée)
+    // Orientation par défaut
     tf2::Quaternion q;
-    q.setRPY(0, 0, 0); // Vous pouvez ajuster l'orientation si nécessaire
+    q.setRPY(0, 0, 0);
     pose.pose.orientation = tf2::toMsg(q);
     
     return pose;
@@ -158,13 +166,6 @@ public:
     {
         path_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>("GoToLoadingStationPath", 5);
         rows = parseFieldRows(xmlFile);
-        
-        // Stocker le point de départ de la première rangée
-        if (!rows.empty()) {
-            firstRowStart_ = rows[0].start;
-            RCLCPP_INFO(node_->get_logger(), "First row start point: (%.2f, %.2f)", 
-                       firstRowStart_.x, firstRowStart_.y);
-        }
     }
 
     static BT::PortsList providedPorts() {
@@ -204,20 +205,14 @@ public:
         goal.header.frame_id = "map";
         goal.header.stamp = node_->now();
         
-        // Calculer la Loading_station_pose (toujours la première rangée + 4m)
+        // Calculer la Loading_station_pose (toujours la première rangée - 4m)
         geometry_msgs::msg::PoseStamped Loading_station_pose;
         if (!rows.empty()) {
-            Point loadingPoint = getExitPointTowardsFirstRowStart(rows[0], firstRowStart_, 4.0);
+            Point loadingPoint = getPointBeforeExit(rows[0], 6.0);
             Loading_station_pose = createPoseFromPoint(loadingPoint, "map");
-            
-            // Définir l'orientation pour la loading pose
-            double dx = loadingPoint.x - rows[0].start.x;
-            double dy = loadingPoint.y - rows[0].start.y;
-            double length = std::sqrt(dx*dx + dy*dy);
-            if (length > 0.001) {
-                dx /= length; dy /= length;
-            }
-            double yaw = std::atan2(dy, dx);
+
+            // Définir l'orientation pour TOUJOURS regarder vers le bord (vers la gauche)
+            double yaw = M_PI; // 180° - regarde vers la gauche
             tf2::Quaternion q;
             q.setRPY(0, 0, yaw);
             Loading_station_pose.pose.orientation = tf2::toMsg(q);
@@ -236,41 +231,55 @@ public:
             }
             
             if (targetRow) {
-                // NOUVELLE LOGIQUE : Aller à 4m APRÈS le point de sortie
-                Point exitPoint = getExitPointTowardsFirstRowStart(*targetRow, firstRowStart_, 4.0);
+                // NOUVELLE LOGIQUE : Aller à 4m AVANT le point de sortie
+                Point targetPoint = getPointBeforeExit(*targetRow, 6.0);
+                Point exitPoint = getExitPointForRow(*targetRow);
                 
-                RCLCPP_INFO(node_->get_logger(), "Row %d détectée: Start(%.2f,%.2f) End(%.2f,%.2f)", 
+                // AFFICHER LES COORDONNÉES EXACTES
+                RCLCPP_INFO(node_->get_logger(), "==========================================");
+                RCLCPP_INFO(node_->get_logger(), "NAVIGATION COORDINATES FOR ROW %d:", targetRow->id);
+                RCLCPP_INFO(node_->get_logger(), "Row %d: Start(%.6f, %.6f) End(%.6f, %.6f)", 
                            targetRow->id, targetRow->start.x, targetRow->start.y, 
                            targetRow->end.x, targetRow->end.y);
-                RCLCPP_INFO(node_->get_logger(), "Going to exit point + 4m: (%.2f, %.2f)", 
-                           exitPoint.x, exitPoint.y);
                 
-                goal.pose.position.x = exitPoint.x;
-                goal.pose.position.y = exitPoint.y;
-                
-                // Calculer l'orientation pour regarder vers l'extérieur
-                double dx = exitPoint.x - targetRow->start.x;
-                double dy = exitPoint.y - targetRow->start.y;
-                double length = std::sqrt(dx*dx + dy*dy);
-                
-                if (length < 0.001) {
-                    dx = 1.0; dy = 0.0;
+                // Afficher le point de sortie utilisé
+                if (targetRow->id == 1 || targetRow->id == 3 || targetRow->id == 5 || targetRow->id == 7 || targetRow->id == 9) {
+                    RCLCPP_INFO(node_->get_logger(), "Exit point (START): (%.6f, %.6f)", exitPoint.x, exitPoint.y);
                 } else {
-                    dx /= length; dy /= length;
+                    RCLCPP_INFO(node_->get_logger(), "Exit point (END): (%.6f, %.6f)", exitPoint.x, exitPoint.y);
                 }
                 
-                double yaw = std::atan2(dy, dx);
+                // Afficher la direction et l'offset
+                double direction_x = (targetRow->id % 2 == 1) ? -1.0 : 1.0;
+                RCLCPP_INFO(node_->get_logger(), "Moving %s from exit point", 
+                           (direction_x > 0) ? "RIGHT" : "LEFT");
+                RCLCPP_INFO(node_->get_logger(), "Distance before exit: 4.0 meters");
+                
+                // Afficher le point final de navigation
+                RCLCPP_INFO(node_->get_logger(), "NAVIGATING TO (4m BEFORE EXIT): (%.6f, %.6f)", 
+                           targetPoint.x, targetPoint.y);
+                RCLCPP_INFO(node_->get_logger(), "==========================================");
+                
+                goal.pose.position.x = targetPoint.x;
+                goal.pose.position.y = targetPoint.y;
+                
+                // Calculer l'orientation selon la direction
+                double yaw = M_PI; // 180°
                 tf2::Quaternion q;
                 q.setRPY(0, 0, yaw);
                 goal.pose.orientation = tf2::toMsg(q);
                 
             } else {
                 RCLCPP_ERROR(node_->get_logger(), "Row %d not found in parsed rows!", currentRowId);
-                applyForwardOffset(robot_pose, goal, 4.0);
+                applyForwardOffset(robot_pose, goal, 6.0);
+                RCLCPP_WARN(node_->get_logger(), "Using fallback navigation to: (%.6f, %.6f)", 
+                           goal.pose.position.x, goal.pose.position.y);
             }
         } else {
             RCLCPP_WARN(node_->get_logger(), "Robot n'est pas dans une Row détectée");
-            applyForwardOffset(robot_pose, goal, 4.0);
+            applyForwardOffset(robot_pose, goal, 6.0);
+            RCLCPP_WARN(node_->get_logger(), "Using fallback navigation to: (%.6f, %.6f)", 
+                       goal.pose.position.x, goal.pose.position.y);
         }
         
         goal.pose.position.z = 0.0;
@@ -281,9 +290,9 @@ public:
         setOutput("closest_row_id", currentRowId);
         
         path_pub_->publish(goal);
-        RCLCPP_INFO(node_->get_logger(), "Goal envoyé: (%.2f, %.2f) - 4m après le point de sortie", 
+        RCLCPP_INFO(node_->get_logger(), "Goal published: (%.6f, %.6f)", 
                    goal.pose.position.x, goal.pose.position.y);
-        RCLCPP_INFO(node_->get_logger(), "Loading pose définie: (%.2f, %.2f)", 
+        RCLCPP_INFO(node_->get_logger(), "Loading station pose: (%.6f, %.6f)", 
                    Loading_station_pose.pose.position.x, Loading_station_pose.pose.position.y);
         
         return BT::NodeStatus::SUCCESS;
@@ -296,7 +305,6 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr path_pub_;
     std::string xmlFile = "/home/hedi/eterry_simulation/src/eterry_sim_stack/simulation_navigation/maps/output.xml";
     std::vector<Row> rows;
-    Point firstRowStart_ = {0.0, 0.0};
 
     void applyForwardOffset(const geometry_msgs::msg::PoseStamped& robot_pose, 
                            geometry_msgs::msg::PoseStamped& goal, double distance) {
