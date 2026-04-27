@@ -303,7 +303,7 @@ private:
     tf2_ros::Buffer tf_buffer_;
     tf2_ros::TransformListener tf_listener_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr path_pub_;
-    std::string xmlFile = "/home/hedi/eterry_simulation/src/eterry_sim_stack/simulation_navigation/maps/output.xml";
+    std::string xmlFile = "/home/eterry_autonomy_stack/src/eterry_localization/fields/output.xml";
     std::vector<Row> rows;
 
     void applyForwardOffset(const geometry_msgs::msg::PoseStamped& robot_pose, 

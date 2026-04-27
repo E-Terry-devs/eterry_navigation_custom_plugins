@@ -47,7 +47,7 @@ public:
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     
     // Charger les rows au démarrage
-    rows_ = parseFieldRows("/home/hedi/eterry_simulation/src/eterry_sim_stack/simulation_navigation/maps/output.xml");
+    rows_ = parseFieldRows("/home/eterry_autonomy_stack/src/eterry_localization/fields/output.xml");
     
     RCLCPP_INFO(node_->get_logger(), "CoveragePathTrimmer initialized with %zu rows", rows_.size());
     for (const auto& row : rows_) {

@@ -26,8 +26,6 @@ find_package(eterry_navigation_custom_interfaces REQUIRED)
 # --- Find your eterry_vs package ---
 find_package(eterry_vs REQUIRED)
 
-
-
 # --- Build vision_navigation_action_bt_node BT node ---
 add_library(vision_navigation_action_bt_node SHARED src/vision_navigation_action.cpp)
 ament_target_dependencies(vision_navigation_action_bt_node
@@ -42,11 +40,28 @@ ament_target_dependencies(vision_navigation_action_bt_node
 # Inclure les répertoires
 target_include_directories(vision_navigation_action_bt_node PRIVATE
     ${eterry_vs_INCLUDE_DIRS}
+     ${tinyxml2_INCLUDE_DIRS}
 )
 
 # Définition pour l'export du plugin
 target_compile_definitions(vision_navigation_action_bt_node PRIVATE "BT_PLUGIN_EXPORT")
 
+
+# --- Build is_path_empty_node BT node ---
+add_library(is_path_empty_bt_node SHARED src/is_path_empty.cpp)
+ament_target_dependencies(is_path_empty_bt_node
+    behaviortree_cpp_v3
+    rclcpp
+    geometry_msgs
+    std_msgs
+    OpenCV
+    eterry_vs  # Votre package eterry_vs
+)
+
+# Inclure les répertoires
+target_include_directories(is_path_empty_bt_node PRIVATE
+    ${eterry_vs_INCLUDE_DIRS}
+)
 
 
 
@@ -121,22 +136,6 @@ target_include_directories(stop_vision_controller_bt_node PUBLIC
   ${eterry_vs_INCLUDE_DIRS}
 )
 target_compile_definitions(stop_vision_controller_bt_node PRIVATE "BT_PLUGIN_EXPORT")
-
-# --- Build stop_gps_controller BT node ---
-add_library(stop_gps_controller_bt_node SHARED src/stop_gps_controller.cpp)
-ament_target_dependencies(stop_gps_controller_bt_node
-  rclcpp
-  geometry_msgs
-  nav_msgs
-  nav2_msgs
-  tf2_ros
-  tf2_geometry_msgs
-  behaviortree_cpp_v3
-)
-target_include_directories(stop_gps_controller_bt_node PUBLIC
-  ${behaviortree_cpp_v3_INCLUDE_DIRS}
-)
-target_compile_definitions(stop_gps_controller_bt_node PRIVATE "BT_PLUGIN_EXPORT")
 
 # --- Build go_to_loading_station BT node ---
 add_library(go_to_loading_station_bt_node SHARED src/go_to_loading_station.cpp)
@@ -270,17 +269,12 @@ install(TARGETS
   pause_condition_bt_node
   obstacle_condition_bt_node
   unloading_button_trigger_bt_node 
-  stop_gps_controller_bt_node
+  is_path_empty_bt_node
   stop_vision_controller_bt_node
-  
   coverage_path_trimmer
   is_vision_available_bt_node
-  vision_navigation_action_bt_node
   LIBRARY DESTINATION lib
 )
 
-install(DIRECTORY launch config
-  DESTINATION share/${PROJECT_NAME}
-)
 
 ament_package()
