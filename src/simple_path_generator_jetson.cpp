@@ -97,7 +97,6 @@ public:
     nav_msgs::msg::Path path_msg;
     path_msg.header.frame_id = "map";
     path_msg.header.stamp = node_->now();
-
     for (int i = 0; i <= num_points; ++i)
     {
       double t = static_cast<double>(i) / num_points;

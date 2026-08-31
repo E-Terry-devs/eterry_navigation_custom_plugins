@@ -31,7 +31,7 @@ public:
             });
             
         RCLCPP_INFO(node_->get_logger(), 
-                   "✅ IsVisionAvailable initialized");
+                   "IsVisionAvailable initialized");
     }
 
     static BT::PortsList providedPorts()

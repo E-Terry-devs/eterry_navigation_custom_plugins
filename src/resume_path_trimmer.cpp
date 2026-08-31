@@ -1,12 +1,15 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <behaviortree_cpp_v3/bt_factory.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <rclcpp/executors/single_threaded_executor.hpp>
 #include <chrono>
 #include <mutex>
+#include <thread>
 #include <tinyxml2.h>
 #include <sstream>
 #include <vector>
@@ -36,22 +39,46 @@ struct Row {
     }
 };
 
-class CoveragePathTrimmer : public BT::SyncActionNode
+class ResumePathTrimmer : public BT::SyncActionNode
 {
 public:
-  CoveragePathTrimmer(const std::string& name, const BT::NodeConfiguration& config)
+  ResumePathTrimmer(const std::string& name, const BT::NodeConfiguration& config)
     : BT::SyncActionNode(name, config)
   {
-    node_ = rclcpp::Node::make_shared("coverage_path_trimmer_node");
+    node_ = rclcpp::Node::make_shared("resume_path_trimmer_node");
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-    
+
+    // Debug publishers: visualize the next upcoming waypoints in RViz
+    debug_path_pub_ = node_->create_publisher<nav_msgs::msg::Path>(
+      "resume_path_trimmer/trimmed_path", 5);
+    debug_markers_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
+      "resume_path_trimmer/waypoints", 5);
+
     // Charger les rows au démarrage
     rows_ = parseFieldRows("/home/hedi/eterry_simulation/src/eterry_sim_stack/simulation_navigation/maps/output.xml");
-    
-    RCLCPP_INFO(node_->get_logger(), "CoveragePathTrimmer initialized with %zu rows", rows_.size());
+
+    RCLCPP_INFO(node_->get_logger(), "ResumePathTrimmer initialized with %zu rows", rows_.size());
     for (const auto& row : rows_) {
         RCLCPP_DEBUG(node_->get_logger(), "  %s", row.toString().c_str());
+    }
+
+    // ResumePathTrimmer only ticks once per "resume" episode (BT Sequence semantics),
+    // so the debug view needs its own live loop, decoupled from BT ticking, to keep
+    // sliding forward as the robot advances. Spin node_ on a dedicated thread so this
+    // wall timer actually fires.
+    executor_.add_node(node_);
+    spin_thread_ = std::thread([this]() { executor_.spin(); });
+    debug_timer_ = node_->create_wall_timer(
+      std::chrono::milliseconds(200),
+      std::bind(&ResumePathTrimmer::publishDebugWindow, this));
+  }
+
+  ~ResumePathTrimmer() override
+  {
+    executor_.cancel();
+    if (spin_thread_.joinable()) {
+      spin_thread_.join();
     }
   }
 
@@ -65,167 +92,232 @@ public:
   }
   
   BT::NodeStatus tick() override
-  {
-    RCLCPP_INFO(node_->get_logger(), "=== CoveragePathTrimmer START ===");
-    
-    // -----------------------------------------------------------------
-    // 1. Récupérer le chemin d'entrée
-    // -----------------------------------------------------------------
-    nav_msgs::msg::Path input_path;
-    auto res_nav_path = getInput("nav_path", input_path);
-    if (!res_nav_path) {
-      RCLCPP_ERROR(node_->get_logger(), "Missing required input [nav_path]");
-      setOutput("trimmed_path", createMinimalPathFromRobotPose());
-      return BT::NodeStatus::FAILURE;
-    }
-
-    RCLCPP_INFO(node_->get_logger(), "Input path has %zu poses", input_path.poses.size());
-    if (input_path.poses.empty()) {
-      RCLCPP_WARN(node_->get_logger(), "Input path is empty");
-      setOutput("trimmed_path", createMinimalPathFromRobotPose());
-      return BT::NodeStatus::FAILURE;
-    }
-
-    // Afficher les premiers points du path pour debug
-    for (size_t i = 0; i < std::min(input_path.poses.size(), size_t(3)); ++i) {
-        RCLCPP_DEBUG(node_->get_logger(), "Path point %zu: (%.2f, %.2f)", 
-                    i, input_path.poses[i].pose.position.x, input_path.poses[i].pose.position.y);
-    }
-
-    // -----------------------------------------------------------------
-    // 2. Récupérer la pose actuelle du robot
-    // -----------------------------------------------------------------
-    geometry_msgs::msg::PoseStamped current_robot_pose;
-    if (!getCurrentRobotPose(current_robot_pose)) {
-      RCLCPP_ERROR(node_->get_logger(), "Failed to get current robot pose from TF");
-      setOutput("trimmed_path", input_path);
-      return BT::NodeStatus::FAILURE;
-    }
-
-    RCLCPP_INFO(node_->get_logger(), "Current robot pose: (%.2f, %.2f)", 
-                current_robot_pose.pose.position.x, current_robot_pose.pose.position.y);
-
-    // -----------------------------------------------------------------
-    // 3. Construire le chemin trimé selon le cas
-    // -----------------------------------------------------------------
-    nav_msgs::msg::Path trimmed_path;
-    trimmed_path.header = input_path.header;
-    bool success = true;
-
-    bool is_within_path = isRobotInCoveragePath(current_robot_pose, input_path);
-    RCLCPP_INFO(node_->get_logger(), "Robot is within coverage path: %s", is_within_path ? "YES" : "NO");
-    
-    if (is_within_path) {
-      // -------------------------------------------------------------
-      // CAS 1 : Robot dans le chemin → trimming standard
-      // -------------------------------------------------------------
-      RCLCPP_INFO(node_->get_logger(), "=== USING STANDARD TRIMMING ===");
-      
-      size_t next_idx = findNextWaypoint(current_robot_pose, input_path);
-      RCLCPP_INFO(node_->get_logger(), "Next waypoint index: %zu/%zu", next_idx, input_path.poses.size());
-      
-      if (next_idx >= input_path.poses.size()) {
-        RCLCPP_INFO(node_->get_logger(), "Reached end of path");
-        trimmed_path = createPathFromRobotPose(current_robot_pose);
-        success = false;
-      } else {
-        trimmed_path.poses.push_back(current_robot_pose);
-        trimmed_path.poses.insert(trimmed_path.poses.end(),
-                                  input_path.poses.begin() + next_idx,
-                                  input_path.poses.end());
-        RCLCPP_INFO(node_->get_logger(), "Standard trimming: start at robot pose, then waypoint %zu", next_idx);
-      }
-    }
-    else {
-      // -------------------------------------------------------------
-      // CAS 2 : Robot hors du chemin → stratégie de reprise
-      // -------------------------------------------------------------
-      RCLCPP_INFO(node_->get_logger(), "=== USING OUTSIDE PATH STRATEGY ===");
-      
-      // Récupérer la pose interrompue (optionnelle)
-      geometry_msgs::msg::PoseStamped target_pose;
-      bool has_interrupted_pose = false;
-      auto res_interrupted = getInput("interrupted_pose", target_pose);
-      if (res_interrupted) {
-        has_interrupted_pose = true;
-        RCLCPP_INFO(node_->get_logger(), "Using interrupted pose: (%.2f, %.2f)", 
-                   target_pose.pose.position.x, target_pose.pose.position.y);
-      } else {
-        target_pose = current_robot_pose;
-        RCLCPP_INFO(node_->get_logger(), "No interrupted pose available, using current pose as target");
-      }
-      
-      size_t target_idx = findInterruptedIndex(target_pose, input_path);
-      RCLCPP_INFO(node_->get_logger(), "Target index in path: %zu/%zu", target_idx, input_path.poses.size());
-      
-      if (target_idx >= input_path.poses.size()) {
-        RCLCPP_WARN(node_->get_logger(), "Could not find target position in path, using full path with robot pose");
-        trimmed_path = input_path;
-        trimmed_path.poses.insert(trimmed_path.poses.begin(), current_robot_pose);
-        success = false;
-      }
-      else {
-        size_t row_start_idx = findRowStart(target_idx, input_path);
-        RCLCPP_INFO(node_->get_logger(), "Row start index: %zu/%zu", row_start_idx, input_path.poses.size());
-        
-        double distance_to_row = pointDistance(current_robot_pose.pose.position, 
-                                               input_path.poses[row_start_idx].pose.position);
-        RCLCPP_INFO(node_->get_logger(), "Distance to row: %.2f meters", distance_to_row);
-        
-        if (distance_to_row > MAX_SAFE_DISTANCE) {
-          RCLCPP_WARN(node_->get_logger(), "Distance to row (%.2fm) exceeds safe limit (%.2fm), using full path with robot pose", 
-                     distance_to_row, MAX_SAFE_DISTANCE);
-          trimmed_path = input_path;
-          trimmed_path.poses.insert(trimmed_path.poses.begin(), current_robot_pose);
-          success = false;
-        }
-        else {
-          RCLCPP_INFO(node_->get_logger(), "Generating safe path to row...");
-          trimmed_path = generateSafePathToRow(current_robot_pose, 
-                                             input_path.poses[row_start_idx], 
-                                             input_path, 
-                                             row_start_idx);
-          RCLCPP_INFO(node_->get_logger(), "Generated safe path with %zu points", trimmed_path.poses.size());
-          success = !trimmed_path.poses.empty();
-        }
-      }
-    }
-
-    // -----------------------------------------------------------------
-    // 4. Validation finale : le chemin NE DOIT PAS être vide
-    // -----------------------------------------------------------------
-    if (trimmed_path.poses.empty()) {
-      RCLCPP_ERROR(node_->get_logger(), "Generated path is empty, falling back to minimal path (robot pose)");
-      trimmed_path = createPathFromRobotPose(current_robot_pose);
-      success = false;
-    }
-
-    // -----------------------------------------------------------------
-    // 5. Toujours publier le chemin sur le blackboard
-    // -----------------------------------------------------------------
-    setOutput("trimmed_path", trimmed_path);
-    
-    RCLCPP_INFO(node_->get_logger(), "=== CoveragePathTrimmer END ===");
-    RCLCPP_INFO(node_->get_logger(), "Final trimmed path: %zu waypoints", trimmed_path.poses.size());
-    if (!trimmed_path.poses.empty()) {
-      RCLCPP_INFO(node_->get_logger(), "First point: (%.2f, %.2f)", 
-                  trimmed_path.poses[0].pose.position.x,
-                  trimmed_path.poses[0].pose.position.y);
-    }
-
-    return success ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+{
+  RCLCPP_INFO(node_->get_logger(), "=== ResumePathTrimmer START ===");
+  
+  // -----------------------------------------------------------------
+  // 1. Récupérer le chemin d'entrée
+  // -----------------------------------------------------------------
+  nav_msgs::msg::Path input_path;
+  auto res_nav_path = getInput("nav_path", input_path);
+  if (!res_nav_path) {
+    RCLCPP_ERROR(node_->get_logger(), "Missing required input [nav_path]");
+    setOutput("trimmed_path", createMinimalPathFromRobotPose());
+    return BT::NodeStatus::FAILURE;
   }
 
+  RCLCPP_INFO(node_->get_logger(), "Input path has %zu poses", input_path.poses.size());
+  if (input_path.poses.empty()) {
+    RCLCPP_WARN(node_->get_logger(), "Input path is empty");
+    setOutput("trimmed_path", createMinimalPathFromRobotPose());
+    return BT::NodeStatus::FAILURE;
+  }
+
+  // -----------------------------------------------------------------
+  // 2. Récupérer la pose actuelle du robot
+  // -----------------------------------------------------------------
+  geometry_msgs::msg::PoseStamped current_robot_pose;
+  if (!getCurrentRobotPose(current_robot_pose)) {
+    RCLCPP_ERROR(node_->get_logger(), "Failed to get current robot pose from TF");
+    setOutput("trimmed_path", input_path);
+    return BT::NodeStatus::FAILURE;
+  }
+
+  RCLCPP_INFO(node_->get_logger(), "Current robot pose: (%.2f, %.2f)", 
+              current_robot_pose.pose.position.x, current_robot_pose.pose.position.y);
+
+  // -----------------------------------------------------------------
+  // 3. Trouver l'index de reprise
+  // -----------------------------------------------------------------
+  size_t target_idx = 0;
+  bool is_within_path = isRobotInCoveragePath(current_robot_pose, input_path);
+  RCLCPP_INFO(node_->get_logger(), "Robot is within coverage path: %s", is_within_path ? "YES" : "NO");
+  
+  if (is_within_path) {
+    target_idx = findNextWaypoint(current_robot_pose, input_path);
+    RCLCPP_INFO(node_->get_logger(), "Robot on path, next waypoint index: %zu", target_idx);
+  } else {
+    geometry_msgs::msg::PoseStamped target_pose;
+    auto res_interrupted = getInput("interrupted_pose", target_pose);
+    if (!res_interrupted) {
+      target_pose = current_robot_pose;
+      RCLCPP_WARN(node_->get_logger(), "No interrupted_pose provided, using current robot pose as target");
+    }
+    target_idx = findInterruptedIndex(target_pose, input_path);
+    RCLCPP_INFO(node_->get_logger(), "Robot off path, resuming from index: %zu", target_idx);
+  }
+  
+  // -----------------------------------------------------------------
+  // 4. Construire le chemin AVEC interpolation (comme CoveragePathTrimmer)
+  // -----------------------------------------------------------------
+  nav_msgs::msg::Path trimmed_path;
+  trimmed_path.header = input_path.header;
+  bool success = true;
+  
+  if (target_idx >= input_path.poses.size()) {
+    RCLCPP_WARN(node_->get_logger(), "Target index out of range, creating minimal path");
+    trimmed_path = createPathFromRobotPose(current_robot_pose);
+    success = false;
+  } else {
+    // Utiliser generateSafePathToRow comme dans la version qui fonctionne
+    trimmed_path = generateSafePathToRow(current_robot_pose, 
+                                        input_path.poses[target_idx], 
+                                        input_path, 
+                                        target_idx);
+    RCLCPP_INFO(node_->get_logger(), "Generated safe path with %zu points from index %zu", 
+                trimmed_path.poses.size(), target_idx);
+    success = !trimmed_path.poses.empty();
+  }
+
+  // -----------------------------------------------------------------
+  // 5. Validation finale
+  // -----------------------------------------------------------------
+  if (trimmed_path.poses.empty()) {
+    RCLCPP_ERROR(node_->get_logger(), "Generated path is empty, falling back to minimal path (robot pose)");
+    trimmed_path = createPathFromRobotPose(current_robot_pose);
+    success = false;
+  }
+
+  // Forcer les frames
+  trimmed_path.header.frame_id = "map";
+  trimmed_path.header.stamp = node_->now();
+  for (auto& pose : trimmed_path.poses) {
+    pose.header.frame_id = "map";
+    pose.header.stamp = node_->now();
+  }
+
+  // -----------------------------------------------------------------
+  // 6. Publier (blackboard BT = chemin complet)
+  // -----------------------------------------------------------------
+  setOutput("trimmed_path", trimmed_path);
+
+  // Le timer de debug (publishDebugWindow) republie en continu les 10
+  // prochains points à partir de ce chemin, glissant au fur et à mesure
+  // que le robot avance -- indépendant du tick du Sequence BT.
+  {
+    std::lock_guard<std::mutex> lock(path_mutex_);
+    latest_full_path_ = trimmed_path;
+  }
+
+  RCLCPP_INFO(node_->get_logger(), "=== ResumePathTrimmer END ===");
+  RCLCPP_INFO(node_->get_logger(), "Final trimmed path: %zu waypoints", trimmed_path.poses.size());
+  if (!trimmed_path.poses.empty()) {
+    RCLCPP_INFO(node_->get_logger(), "First point: (%.2f, %.2f) distance from robot: %.3f", 
+                trimmed_path.poses[0].pose.position.x,
+                trimmed_path.poses[0].pose.position.y,
+                pointDistance(current_robot_pose.pose.position, trimmed_path.poses[0].pose.position));
+  }
+
+  return success ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+}
 private:
   std::vector<Row> rows_;
   rclcpp::Node::SharedPtr node_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-  
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr debug_path_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr debug_markers_pub_;
+  rclcpp::TimerBase::SharedPtr debug_timer_;
+  rclcpp::executors::SingleThreadedExecutor executor_;
+  std::thread spin_thread_;
+  std::mutex path_mutex_;
+  nav_msgs::msg::Path latest_full_path_;
+
   // Constants for safety
-  const double MAX_SAFE_DISTANCE = 20.0;
   const double WAYPOINT_SPACING = 0.5;
-  const double PROXIMITY_THRESHOLD = 0.8;
+  const double PROXIMITY_THRESHOLD = 1.0;
+  // Debug viz only: how many upcoming waypoints to publish for RViz (full path still goes to FollowPath)
+  const size_t DEBUG_MAX_WAYPOINTS = 10;
+
+  // -----------------------------------------------------------------
+  // Debug : republier en continu (200ms) les DEBUG_MAX_WAYPOINTS prochains
+  // points à partir de la pose actuelle du robot, sur le dernier chemin connu.
+  // Tourne sur son propre thread/timer, indépendant du tick BT.
+  // -----------------------------------------------------------------
+  void publishDebugWindow()
+  {
+    nav_msgs::msg::Path path_copy;
+    {
+      std::lock_guard<std::mutex> lock(path_mutex_);
+      path_copy = latest_full_path_;
+    }
+    if (path_copy.poses.empty()) {
+      return;
+    }
+
+    geometry_msgs::msg::PoseStamped robot_pose;
+    if (!getCurrentRobotPose(robot_pose)) {
+      return;
+    }
+
+    size_t nearest_idx = findNextWaypoint(robot_pose, path_copy);
+    size_t end_idx = std::min(path_copy.poses.size(), nearest_idx + DEBUG_MAX_WAYPOINTS);
+
+    nav_msgs::msg::Path debug_path;
+    debug_path.header = path_copy.header;
+    debug_path.header.frame_id = "map";
+    debug_path.header.stamp = node_->now();
+    debug_path.poses.assign(
+      path_copy.poses.begin() + nearest_idx,
+      path_copy.poses.begin() + end_idx);
+
+    debug_path_pub_->publish(debug_path);
+    publishWaypointMarkers(debug_path);
+  }
+
+  // -----------------------------------------------------------------
+  // Debug : publier chaque waypoint du chemin comme une sphère numérotée
+  // (visible dans RViz via un display "MarkerArray" sur le topic
+  // resume_path_trimmer/waypoints, pratique pour quelqu'un qui ne connaît
+  // pas le robot)
+  // -----------------------------------------------------------------
+  void publishWaypointMarkers(const nav_msgs::msg::Path& path) const
+  {
+    visualization_msgs::msg::MarkerArray markers;
+
+    // Effacer les markers du tick précédent avant de republier les nouveaux
+    visualization_msgs::msg::Marker clear_marker;
+    clear_marker.header.frame_id = "map";
+    clear_marker.action = visualization_msgs::msg::Marker::DELETEALL;
+    markers.markers.push_back(clear_marker);
+
+    for (size_t i = 0; i < path.poses.size(); ++i) {
+      visualization_msgs::msg::Marker sphere;
+      sphere.header.frame_id = "map";
+      sphere.header.stamp = node_->now();
+      sphere.ns = "resume_path_trimmer_waypoints";
+      sphere.id = static_cast<int>(i);
+      sphere.type = visualization_msgs::msg::Marker::SPHERE;
+      sphere.action = visualization_msgs::msg::Marker::ADD;
+      sphere.pose = path.poses[i].pose;
+      sphere.scale.x = 0.15;
+      sphere.scale.y = 0.15;
+      sphere.scale.z = 0.15;
+      sphere.color.r = (i == 0) ? 1.0f : 0.0f;
+      sphere.color.g = (i == 0) ? 0.0f : 1.0f;
+      sphere.color.b = 0.0f;
+      sphere.color.a = 1.0f;
+      markers.markers.push_back(sphere);
+
+      visualization_msgs::msg::Marker label;
+      label.header = sphere.header;
+      label.ns = "resume_path_trimmer_waypoint_labels";
+      label.id = static_cast<int>(i);
+      label.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+      label.action = visualization_msgs::msg::Marker::ADD;
+      label.pose = path.poses[i].pose;
+      label.pose.position.z += 0.3;
+      label.scale.z = 0.2;
+      label.color.r = 1.0f;
+      label.color.g = 1.0f;
+      label.color.b = 1.0f;
+      label.color.a = 1.0f;
+      label.text = std::to_string(i);
+      markers.markers.push_back(label);
+    }
+
+    debug_markers_pub_->publish(markers);
+  }
 
   // -----------------------------------------------------------------
   // Helper : créer un chemin contenant uniquement la pose robot
@@ -499,5 +591,5 @@ private:
 
 BT_REGISTER_NODES(factory)
 {
-  factory.registerNodeType<CoveragePathTrimmer>("CoveragePathTrimmer");
+  factory.registerNodeType<ResumePathTrimmer>("ResumePathTrimmer");
 }

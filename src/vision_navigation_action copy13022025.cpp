@@ -105,6 +105,8 @@ public:
     static PortsList providedPorts()
     {
         return { 
+            InputPort<int>("row_number"),
+            InputPort<double>("desired_speed"),
             InputPort<bool>("show_visualization")
         };
     }
@@ -119,9 +121,14 @@ public:
         frame_counter_ = 0;
         image_counter_ = 0;
         
-
+        // Lecture des ports d'entrée
+        int row_number = 0;
+        double desired_speed = 0.0;
+        getInput("row_number", row_number);
+        getInput("desired_speed", desired_speed);
         getInput("show_visualization", show_visualization_);
         
+        RCLCPP_INFO(ros_node_->get_logger(), "Row: %d, Speed: %.2f", row_number, desired_speed);
         
         // Initialisation de la caméra
         I_primary_ = (vs_controller_.camera_ID == 1) ? 
@@ -276,6 +283,8 @@ private:
                           5, cv::Scalar(0, 204, 255), cv::FILLED, 8, 0);
             }
             
+            // === NOUVEAU : Dessiner la ligne de la rangée courante ===
+            drawCurrentRowInImage(vis_image, current_row_);
             
             std::string stats_text = "Frame: " + std::to_string(frame_counter_) +
                                     " | Points: " + std::to_string(I_primary_->points.size()) +
@@ -313,6 +322,9 @@ private:
 
     // ========== FONCTIONS AJOUTÉES ==========
     
+    /**
+     * Obtient la pose actuelle du robot dans le repère "map"
+     */
     bool getRobotPoseInMap(geometry_msgs::msg::PoseStamped& robot_pose)
     {
         try {
@@ -333,6 +345,51 @@ private:
         }
     }
     
+    /**
+     * Dessine une représentation de la rangée courante dans l'image
+     * Version simplifiée : ligne verticale au centre
+     */
+    void drawCurrentRowInImage(cv::Mat& image, int row_id)
+    {
+        if (row_id <= 0) {
+            // En virage, on ne dessine rien
+            return;
+        }
+        
+        // Vérifier que l'ID de rangée est valide
+        if (row_id > static_cast<int>(rows_.size())) {
+            RCLCPP_WARN_THROTTLE(ros_node_->get_logger(), *ros_node_->get_clock(), 5000,
+                                 "Row ID %d invalide (max %zu)", row_id, rows_.size());
+            return;
+        }
+        
+        // === Version simplifiée : ligne verticale au centre ===
+        int center_x = image.cols / 2;
+        cv::line(image, cv::Point(center_x, 0), cv::Point(center_x, image.rows),
+                 cv::Scalar(255, 255, 0), 3); // Cyan
+        
+        // Ajouter le numéro de rangée
+        cv::putText(image, "Row " + std::to_string(row_id),
+                    cv::Point(10, 90), cv::FONT_HERSHEY_SIMPLEX, 1.0,
+                    cv::Scalar(255, 255, 0), 2);
+        
+        // === Version commentée : projection exacte (quand vous aurez la calibration) ===
+        /*
+        geometry_msgs::msg::PoseStamped robot_pose;
+        if (!getRobotPoseInMap(robot_pose)) {
+            return;
+        }
+        
+        const RowSegment& row = rows_[row_id - 1];
+        
+        // Ici, il faudrait :
+        // 1. Transformer les points start/end de la rangée dans le repère caméra
+        // 2. Projeter ces points 3D sur l'image en utilisant la matrice de projection
+        // 3. Dessiner la ligne entre les deux points projetés
+        
+        // Exemple de structure à venir quand vous aurez la calibration
+        */
+    }
 
     void coveragePlanCallback(const nav_msgs::msg::Path::SharedPtr msg)
     {

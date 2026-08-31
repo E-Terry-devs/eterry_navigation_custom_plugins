@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -27,6 +28,22 @@ find_package(eterry_navigation_custom_interfaces REQUIRED)
 find_package(eterry_vs REQUIRED)
 
 
+# --- Build vision_navigation_action_bt_node BT node ---
+add_library(is_path_empty_bt_node SHARED src/is_path_empty.cpp)
+ament_target_dependencies(is_path_empty_bt_node
+    behaviortree_cpp_v3
+    rclcpp
+    geometry_msgs
+    std_msgs
+    OpenCV
+    eterry_vs  # Votre package eterry_vs
+)
+
+# Inclure les répertoires
+target_include_directories(is_path_empty_bt_node PRIVATE
+    ${eterry_vs_INCLUDE_DIRS}
+)
+target_compile_definitions(is_path_empty_bt_node PRIVATE "BT_PLUGIN_EXPORT")
 
 # --- Build vision_navigation_action_bt_node BT node ---
 add_library(vision_navigation_action_bt_node SHARED src/vision_navigation_action.cpp)
@@ -42,6 +59,7 @@ ament_target_dependencies(vision_navigation_action_bt_node
 # Inclure les répertoires
 target_include_directories(vision_navigation_action_bt_node PRIVATE
     ${eterry_vs_INCLUDE_DIRS}
+     ${tinyxml2_INCLUDE_DIRS}
 )
 
 # Définition pour l'export du plugin
@@ -196,6 +214,42 @@ target_include_directories(coverage_path_trimmer PUBLIC
 )
 target_compile_definitions(coverage_path_trimmer PRIVATE "BT_PLUGIN_EXPORT")
 
+
+
+# --- Build ReversePathTrimmer BT node ---
+add_library(reverse_path_trimmer SHARED src/reverse_path_trimmer.cpp)
+ament_target_dependencies(reverse_path_trimmer
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  behaviortree_cpp_v3
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+target_include_directories(reverse_path_trimmer PUBLIC
+  ${behaviortree_cpp_v3_INCLUDE_DIRS}
+)
+target_compile_definitions(reverse_path_trimmer PRIVATE "BT_PLUGIN_EXPORT")
+
+# --- Build ResumePathTrimmer BT node ---
+add_library(resume_path_trimmer SHARED src/resume_path_trimmer.cpp)
+ament_target_dependencies(resume_path_trimmer
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  visualization_msgs
+  behaviortree_cpp_v3
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+target_include_directories(resume_path_trimmer PUBLIC
+  ${behaviortree_cpp_v3_INCLUDE_DIRS}
+)
+target_compile_definitions(resume_path_trimmer PRIVATE "BT_PLUGIN_EXPORT")
+
+
 # --- Build PauseCondition BT node ---
 add_library(pause_condition_bt_node SHARED src/pause_condition.cpp)
 ament_target_dependencies(pause_condition_bt_node
@@ -271,9 +325,11 @@ install(TARGETS
   obstacle_condition_bt_node
   unloading_button_trigger_bt_node 
   stop_gps_controller_bt_node
+  is_path_empty_bt_node
   stop_vision_controller_bt_node
-  
+  resume_path_trimmer
   coverage_path_trimmer
+  reverse_path_trimmer
   is_vision_available_bt_node
   vision_navigation_action_bt_node
   LIBRARY DESTINATION lib
