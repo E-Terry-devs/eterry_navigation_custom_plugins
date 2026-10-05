@@ -232,6 +232,20 @@ target_include_directories(reverse_path_trimmer PUBLIC
 )
 target_compile_definitions(reverse_path_trimmer PRIVATE "BT_PLUGIN_EXPORT")
 
+# --- Build LateralOffsetCorrector BT node ---
+add_library(lateral_offset_corrector SHARED src/lateral_offset_corrector.cpp)
+ament_target_dependencies(lateral_offset_corrector
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  std_msgs
+  behaviortree_cpp_v3
+)
+target_include_directories(lateral_offset_corrector PUBLIC
+  ${behaviortree_cpp_v3_INCLUDE_DIRS}
+)
+target_compile_definitions(lateral_offset_corrector PRIVATE "BT_PLUGIN_EXPORT")
+
 # --- Build ResumePathTrimmer BT node ---
 add_library(resume_path_trimmer SHARED src/resume_path_trimmer.cpp)
 ament_target_dependencies(resume_path_trimmer
@@ -330,6 +344,7 @@ install(TARGETS
   resume_path_trimmer
   coverage_path_trimmer
   reverse_path_trimmer
+  lateral_offset_corrector
   is_vision_available_bt_node
   vision_navigation_action_bt_node
   LIBRARY DESTINATION lib

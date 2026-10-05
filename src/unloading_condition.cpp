@@ -14,13 +14,13 @@ public:
 
   static BT::PortsList providedPorts() { return {}; }
 
+  // Idempotent : une pause qui halte GoToUnloadingSequence remet son index à
+  // zéro, et IsUnloading est re-tické à la reprise alors que le flag est déjà
+  // posé. Renvoyer FAILURE ici ferait abandonner le déchargement.
   BT::NodeStatus tick() override
   {
-    if (!g_unloading_flag) {
-      g_unloading_flag = true;
-      return BT::NodeStatus::SUCCESS; 
-    }
-    return BT::NodeStatus::FAILURE;
+    g_unloading_flag = true;
+    return BT::NodeStatus::SUCCESS;
   }
 };
 
