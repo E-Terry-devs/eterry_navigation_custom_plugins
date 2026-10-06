@@ -19,6 +19,7 @@ find_package(std_msgs REQUIRED)
 find_package(tinyxml2 REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(eterry_navigation_custom_interfaces REQUIRED)
 
@@ -195,6 +196,56 @@ target_include_directories(coverage_path_trimmer PUBLIC
 )
 target_compile_definitions(coverage_path_trimmer PRIVATE "BT_PLUGIN_EXPORT")
 
+# --- Build ReversePathTrimmer BT node ---
+add_library(reverse_path_trimmer SHARED src/reverse_path_trimmer.cpp)
+ament_target_dependencies(reverse_path_trimmer
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  behaviortree_cpp_v3
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+target_include_directories(reverse_path_trimmer PUBLIC
+  ${behaviortree_cpp_v3_INCLUDE_DIRS}
+)
+target_compile_definitions(reverse_path_trimmer PRIVATE "BT_PLUGIN_EXPORT")
+
+# --- Build ResumePathTrimmer BT node ---
+add_library(resume_path_trimmer SHARED src/resume_path_trimmer.cpp)
+ament_target_dependencies(resume_path_trimmer
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  visualization_msgs
+  behaviortree_cpp_v3
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+target_include_directories(resume_path_trimmer PUBLIC
+  ${behaviortree_cpp_v3_INCLUDE_DIRS}
+)
+target_compile_definitions(resume_path_trimmer PRIVATE "BT_PLUGIN_EXPORT")
+
+# --- Build LateralOffsetCorrector BT node ---
+add_library(lateral_offset_corrector SHARED src/lateral_offset_corrector.cpp)
+ament_target_dependencies(lateral_offset_corrector
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  std_msgs
+  behaviortree_cpp_v3
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+target_include_directories(lateral_offset_corrector PUBLIC
+  ${behaviortree_cpp_v3_INCLUDE_DIRS}
+)
+target_compile_definitions(lateral_offset_corrector PRIVATE "BT_PLUGIN_EXPORT")
+
 # --- Build PauseCondition BT node ---
 add_library(pause_condition_bt_node SHARED src/pause_condition.cpp)
 ament_target_dependencies(pause_condition_bt_node
@@ -272,7 +323,10 @@ install(TARGETS
   is_path_empty_bt_node
   stop_vision_controller_bt_node
   coverage_path_trimmer
+  reverse_path_trimmer
+  resume_path_trimmer
   is_vision_available_bt_node
+  lateral_offset_corrector
   LIBRARY DESTINATION lib
 )
 

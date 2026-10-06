@@ -19,6 +19,7 @@
   <depend>std_msgs</depend>
   <depend>nav2_util</depend>
   <depend>sensor_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>eterry_vs</depend>
   <depend>cv_bridge</depend>
   <depend>opencv</depend>

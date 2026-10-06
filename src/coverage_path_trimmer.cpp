@@ -208,7 +208,7 @@ private:
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   
   // Constants for safety
-  const double MAX_SAFE_DISTANCE = 20.0; // meters
+  const double MAX_SAFE_DISTANCE = 2500.0; // meters
   const double WAYPOINT_SPACING = 0.5; // meters between intermediate points
   const double PROXIMITY_THRESHOLD = 0.1; // meters to consider robot "in path"
 
